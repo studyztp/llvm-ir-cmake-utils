@@ -86,6 +86,9 @@ function(llvmir_attach_bc_target)
   debug(
     "@llvmir_attach_bc_target ${DEPENDS_TRGT} linker lang: ${LINKER_LANGUAGE}")
 
+  message(STATUS "Attaching to target ${DEPENDS_TRGT}.")
+  message(STATUS "Linker language: ${LINKER_LANGUAGE}")
+
   llvmir_set_compiler(${LINKER_LANGUAGE})
 
   ## command options
@@ -112,33 +115,109 @@ function(llvmir_attach_bc_target)
   llvmir_extract_lang_flags(IN_LANG_FLAGS ${LINKER_LANGUAGE})
 
   # Link static libraries
-  if(LLVMIR_ATTACH_ATTACH_TO_DEPENDENT_STATIC_LIBS)
+  if(LLVMIR_ATTACH_ATTACH_TO_DEPENDENT_STATIC_LIBS OR LINK_LIBRARIES)
     message(STATUS "ATTACH_TO_DEPENDENT_STATIC_LIBS option is turned on. Attaching to dependent static libraries of target ${TRGT}.")
 
     # Find statically linked libraries, and add the source files for IR generation
     foreach(LINK_LIB ${LINK_LIBRARIES})
+      message(STATUS "Checking dependent library ${LINK_LIB} of target ${TRGT}.")
       if(TARGET ${LINK_LIB})
         get_target_property(type ${LINK_LIB} TYPE)
 
         # Check the library is a static one. For shared libraries, we cannot get the source files for compiling.
-        if(${type} STREQUAL "STATIC_LIBRARY")
-          get_property(LINK_LIB_FILES TARGET ${LINK_LIB} PROPERTY SOURCES)
-          message(STATUS "Attaching to dependent static library ${LINK_LIB} of target ${TRGT}.")
+        # if(${type} STREQUAL "STATIC_LIBRARY")
+        #   get_property(LINK_LIB_FILES TARGET ${LINK_LIB} PROPERTY SOURCES)
+        #   message(STATUS "Attaching to dependent static library ${LINK_LIB} of target ${TRGT}.")
 
-          foreach(LINK_LIB_FILE ${LINK_LIB_FILES})
-            if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${LINK_LIB_FILE}")
-              list(APPEND IN_FILES ${LINK_LIB_FILE})
-              message(STATUS "Add file from static library: ${LINK_LIB_FILE}")
-            endif()
-          endforeach()
-        endif()
+        #   foreach(LINK_LIB_FILE ${LINK_LIB_FILES})
+        #     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${LINK_LIB_FILE}")
+        #       list(APPEND IN_FILES ${LINK_LIB_FILE})
+        #       message(STATUS "Add file from static library: ${LINK_LIB_FILE}")
+        #     endif()
+        #   endforeach()
+        # else()
+          message(WARNING "The library ${LINK_LIB} is not a static library. Add the interface flags manually.")
+          # find all the include directories
+          get_target_property(LINK_LIB_INCLUDE_DIRECTORIES ${LINK_LIB} INTERFACE_INCLUDE_DIRECTORIES)
+          if(LINK_LIB_INCLUDE_DIRECTORIES)
+            foreach(path ${LINK_LIB_INCLUDE_DIRECTORIES})
+              if(path MATCHES "\\$<BUILD_INTERFACE:([^>]+)>")
+                set(BUILD_PATH "${CMAKE_MATCH_1}")
+                list(APPEND IN_INCLUDES -I${BUILD_PATH})
+              elseif(path MATCHES "\\$<INSTALL_INTERFACE:([^>]+)>")
+                set(INSTALL_PATH "${CMAKE_MATCH_1}")
+                list(APPEND IN_INCLUDES -I${INSTALL_PATH})
+              elseif(path MATCHES "\\$<COMPILE_LANGUAGE:([^>]+)>")
+                message(WARNING "The compile language ${CMAKE_MATCH_1} is a generator.")
+              else()
+                list(APPEND IN_INCLUDES -I${path})
+              endif()
+            endforeach()
+            message(WARNING "The include directories ${LINK_LIB_INCLUDE_DIRECTORIES} are added to include directories.")
+          endif()
+          # find all the compile definitions
+          get_target_property(LINK_LIB_COMPILE_DEFINITIONS ${LINK_LIB} INTERFACE_COMPILE_DEFINITIONS)
+          if(LINK_LIB_COMPILE_DEFINITIONS)
+            foreach(def ${LINK_LIB_COMPILE_DEFINITIONS})
+              if(def MATCHES "\\$<COMPILE_LANGUAGE:([^>]+)>")
+                message(WARNING "The compile language ${CMAKE_MATCH_1} is a generator.")
+              else()
+                list(APPEND IN_DEFS -D${def})
+              endif()
+            endforeach()
+            message(WARNING "The compile definitions ${LINK_LIB_COMPILE_DEFINITIONS} are added to compile definitions.")
+          endif()
+          # find all the compile options
+          get_target_property(LINK_LIB_COMPILE_OPTIONS ${LINK_LIB} INTERFACE_COMPILE_OPTIONS)
+          if(LINK_LIB_COMPILE_OPTIONS)
+            foreach(opt ${LINK_LIB_COMPILE_OPTIONS})
+              if (opt MATCHES "\\$<COMPILE_LANGUAGE:([^>]+)>")
+                if(opt MATCHES "\\$<\\$<COMPILE_LANGUAGE:([^>]+)>:([^>]+)>")
+                  if("${CMAKE_MATCH_1}" STREQUAL "CXX")
+                    # Extract the actual flag (removing SHELL: if present)
+                    string(REGEX REPLACE "^SHELL:" "" actual_flag "${CMAKE_MATCH_2}")
+                    list(APPEND IN_COMPILE_OPTIONS ${actual_flag})
+                    message(WARNING "The compile language ${CMAKE_MATCH_1} is a generator. The compile option ${actual_flag} is added to compile options.")
+                  endif()
+                endif()
+              else()
+                list(APPEND IN_COMPILE_OPTIONS ${opt})
+              endif()
+            endforeach()
+            message(WARNING "The compile options ${LINK_LIB_COMPILE_OPTIONS} are added to compile options.")
+          endif()
+          # find all the link options
+          get_target_property(LINK_LIB_LINK_OPTIONS ${LINK_LIB} INTERFACE_LINK_OPTIONS)
+          if(LINK_LIB_LINK_OPTIONS)
+            foreach(opt ${LINK_LIB_LINK_OPTIONS})
+              if(opt MATCHES "\\$<COMPILE_LANGUAGE:([^>]+)>")
+                message(WARNING "The compile language ${CMAKE_MATCH_1} is a generator.")
+              else()
+                list(APPEND LINK_FLAGS ${opt})
+              endif()
+            endforeach()
+            message(WARNING "The link options ${LINK_LIB_LINK_OPTIONS} are added to link options.")
+          endif()
+          # find all the link libraries
+          get_target_property(LINK_LIB_LINK_LIBRARIES ${LINK_LIB} INTERFACE_LINK_LIBRARIES)
+          if(LINK_LIB_LINK_LIBRARIES)
+            foreach(lib ${LINK_LIB_LINK_LIBRARIES})
+              if(lib MATCHES "\\$<COMPILE_LANGUAGE:([^>]+)>")
+                message(WARNING "The compile language ${CMAKE_MATCH_1} is a generator.")
+              else()
+                list(APPEND INTERFACE_LINK_LIBRARIES ${lib})
+              endif()
+            endforeach()
+            message(WARNING "The link libraries ${LINK_LIB_LINK_LIBRARIES} are added to link libraries.")
+          endif()
+        # endif()
       endif()
     endforeach()
 
     list(REMOVE_DUPLICATES IN_FILES)
   endif()
 
-  set(header_exts ".h;.hh;.hpp;.h++;.hxx")
+  set(header_exts ".h;.hh;.hpp;.h++;.hxx;.txt")
   set(temp_include_dirs "")
 
   # Find all header files in the source
@@ -149,7 +228,7 @@ function(llvmir_attach_bc_target)
     list(FIND header_exts ${FILE_EXT} _index)
 
     if(${_index} GREATER -1)
-      message(WARNING "A header file ${IN_FILE} is found in source files! Please add header directories using target_include_directories() instead.")
+      # message(WARNING "A header file ${IN_FILE} is found in source files! Please add header directories using target_include_directories() instead.")
 
       # Add to include list
       list(APPEND temp_include_dirs "-I${FILE_DIR}")
@@ -196,12 +275,17 @@ function(llvmir_attach_bc_target)
     debug("@llvmir_attach_bc_target ${DEPENDS_TRGT} compile flags: \
     ${CURRENT_COMPILE_FLAGS}")
 
-    set(CMD_ARGS "-emit-llvm" ${IN_STANDARD_FLAGS} ${IN_LANG_FLAGS}
+    set(CMD_ARGS "-S" "-emit-llvm" ${IN_STANDARD_FLAGS} ${IN_LANG_FLAGS}
       ${IN_COMPILE_OPTIONS} ${CURRENT_COMPILE_FLAGS} ${CURRENT_DEFS}
       ${IN_INCLUDES})
 
+    set(COMPILER_TO_USE ${LLVMIR_COMPILER})
+    llvmir_extract_lang_compiler(COMPILER_TO_USE ${ABS_IN_FILE})
+
+    message(STATUS "USING ${COMPILER_TO_USE} for ${ABS_IN_FILE}")
+
     add_custom_command(OUTPUT ${FULL_OUT_LLVMIR_FILE}
-      COMMAND ${LLVMIR_COMPILER}
+      COMMAND ${COMPILER_TO_USE}
       ARGS ${CMD_ARGS} -c ${ABS_IN_FILE} -o ${FULL_OUT_LLVMIR_FILE}
       DEPENDS ${ABS_IN_FILE}
       IMPLICIT_DEPENDS ${LINKER_LANGUAGE} ${ABS_IN_FILE}
@@ -1037,5 +1121,158 @@ function(llvmir_attach_library)
   endforeach()
 
   ## postamble
+endfunction()
+
+function(llvmir_attach_link_two_target)
+
+  set(options)
+  set(oneValueArgs TARGET)
+  set(multiValueArgs DEPENDS)
+  cmake_parse_arguments(LLVMIR_ATTACH
+    "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+  set(TRGT ${LLVMIR_ATTACH_TARGET})
+  set(DEPENDS_TRGTS ${LLVMIR_ATTACH_DEPENDS})
+
+  # fallback to backwards compatible mode for argument parsing
+  if(NOT TRGT AND NOT DEPENDS_TRGTS)
+    # Get first arg as target
+    list(GET LLVMIR_ATTACH_UNPARSED_ARGUMENTS 0 TRGT)
+    
+    # Get remaining args as dependencies
+    list(LENGTH LLVMIR_ATTACH_UNPARSED_ARGUMENTS arg_count)
+    math(EXPR end_idx "${arg_count} - 1")
+    foreach(idx RANGE 1 ${end_idx})
+      list(GET LLVMIR_ATTACH_UNPARSED_ARGUMENTS ${idx} dep)
+      list(APPEND DEPENDS_TRGTS ${dep})
+    endforeach()
+    
+    # Remove all processed arguments
+    list(REMOVE_AT LLVMIR_ATTACH_UNPARSED_ARGUMENTS 0-${end_idx})
+  endif()
+
+  if(NOT TRGT)
+    message(FATAL_ERROR "llvmir_attach_link_target: missing TARGET option")
+  endif()
+
+  if(NOT DEPENDS_TRGTS)
+    message(FATAL_ERROR "llvmir_attach_link_target: missing DEPENDS option")
+  endif()
+
+  ## preamble
+  llvmir_check_target_properties(${DEPENDS_TRGT})
+
+  set(OUT_LLVMIR_FILES "")
+  set(FULL_OUT_LLVMIR_FILES "")
+
+  # setup global list for properties
+  set(GLBOAL_IN_LLVMIR_TYPE "")
+  set(GLBOAL_LLVMIR_EXTERNAL_TYPE "")
+  set(GLBOAL_INFILES "")
+  set(GLBOAL_LINKER_LANGUAGE "")
+  set(GLBOAL_LINK_DEPENDS "")
+  set(GLBOAL_LINK_FLAGS "")
+  set(GLBOAL_LINK_FLAGS_${CMAKE_BUILD_TYPE} "")
+  set(GLBOAL_INTERFACE_LINK_LIBRARIES "")
+  set(GLBOAL_LINK_LIBRARIES "")
+  set(GLBOAL_LINK_INTERFACE_LIBRARIES "")
+  set(GLBOAL_LINK_INTERFACE_LIBRARIES_${CMAKE_BUILD_TYPE} "")
+  set(GLBOAL_SHORT_NAME "")
+
+  foreach(dep_target ${DEPENDS_TRGTS})
+    get_property(IN_LLVMIR_TYPE TARGET ${dep_target} PROPERTY LLVMIR_TYPE)
+    get_property(LLVMIR_EXTERNAL_TYPE TARGET ${dep_target}
+      PROPERTY LLVMIR_EXTERNAL_TYPE)
+    get_property(INFILES TARGET ${dep_target} PROPERTY LLVMIR_FILES)
+    get_property(IN_LLVMIR_DIR TARGET ${dep_target} PROPERTY LLVMIR_DIR)
+    get_property(LINKER_LANGUAGE TARGET ${dep_target} PROPERTY LINKER_LANGUAGE)
+    get_property(LINK_DEPENDS TARGET ${dep_target} PROPERTY LINK_DEPENDS)
+    get_property(LINK_FLAGS TARGET ${dep_target} PROPERTY LINK_FLAGS)
+    get_property(LINK_FLAGS_${CMAKE_BUILD_TYPE}
+      TARGET ${dep_target}
+      PROPERTY LINK_FLAGS_${CMAKE_BUILD_TYPE})
+    get_property(INTERFACE_LINK_LIBRARIES
+      TARGET ${dep_target}
+      PROPERTY INTERFACE_LINK_LIBRARIES)
+    get_property(LINK_LIBRARIES TARGET ${dep_target} PROPERTY LINK_LIBRARIES)
+    get_property(LINK_INTERFACE_LIBRARIES
+      TARGET ${dep_target}
+      PROPERTY LINK_INTERFACE_LIBRARIES)
+    get_property(LINK_INTERFACE_LIBRARIES_${CMAKE_BUILD_TYPE}
+      TARGET ${dep_target}
+      PROPERTY LINK_INTERFACE_LIBRARIES_${CMAKE_BUILD_TYPE})
+    get_property(SHORT_NAME TARGET ${dep_target} PROPERTY LLVMIR_SHORT_NAME)
+
+    if(NOT "${IN_LLVMIR_TYPE}" STREQUAL "${LLVMIR_BINARY_TYPE}")
+      message(FATAL_ERROR "Cannot attach ${TRGT} to a ${IN_LLVMIR_TYPE} target.")
+    endif()
+
+    list(APPEND GLBOAL_INFILES ${IN_LLVMIR_DIR}/${INFILES})
+    list(APPEND GLBOAL_LINK_DEPENDS ${LINK_DEPENDS})
+    list(APPEND GLBOAL_LINK_FLAGS ${LINK_FLAGS})
+    list(APPEND GLBOAL_LINK_FLAGS_${CMAKE_BUILD_TYPE}
+      ${LINK_FLAGS_${CMAKE_BUILD_TYPE}})
+    list(APPEND GLBOAL_INTERFACE_LINK_LIBRARIES ${INTERFACE_LINK_LIBRARIES})
+    list(APPEND GLBOAL_LINK_LIBRARIES ${LINK_LIBRARIES})
+    list(APPEND GLBOAL_LINK_INTERFACE_LIBRARIES ${LINK_INTERFACE_LIBRARIES})
+    list(APPEND GLBOAL_LINK_INTERFACE_LIBRARIES_${CMAKE_BUILD_TYPE}
+      ${LINK_INTERFACE_LIBRARIES_${CMAKE_BUILD_TYPE}})
+    list(APPEND GLBOAL_SHORT_NAME ${SHORT_NAME})
+  endforeach()
+
+  ## main operations
+  set(WORK_DIR "${CMAKE_CURRENT_BINARY_DIR}/${LLVMIR_DIR}/${TRGT}")
+  file(MAKE_DIRECTORY ${WORK_DIR})
+
+  set(IN_FULL_LLVMIR_FILES "")
+  foreach(IN_LLVMIR_FILE ${GLBOAL_INFILES})
+    list(APPEND IN_FULL_LLVMIR_FILES "${IN_LLVMIR_FILE}")
+  endforeach()
+
+  set(FULL_OUT_LLVMIR_FILE "${WORK_DIR}/${TRGT}.${LLVMIR_BINARY_FMT_SUFFIX}")
+  if(SHORT_NAME)
+    set(FULL_OUT_LLVMIR_FILE
+      "${WORK_DIR}/${SHORT_NAME}.${LLVMIR_BINARY_FMT_SUFFIX}")
+  endif()
+  get_filename_component(OUT_LLVMIR_FILE ${FULL_OUT_LLVMIR_FILE} NAME)
+
+  list(APPEND OUT_LLVMIR_FILES ${OUT_LLVMIR_FILE})
+  list(APPEND FULL_OUT_LLVMIR_FILES ${FULL_OUT_LLVMIR_FILE})
+
+  # setup custom target
+  add_custom_target(${TRGT} DEPENDS ${FULL_OUT_LLVMIR_FILES})
+
+  set_property(TARGET ${TRGT} PROPERTY LLVMIR_TYPE ${LLVMIR_BINARY_TYPE})
+  set_property(TARGET ${TRGT}
+    PROPERTY LLVMIR_EXTERNAL_TYPE ${LLVMIR_EXTERNAL_TYPE})
+  set_property(TARGET ${TRGT} PROPERTY LLVMIR_DIR ${WORK_DIR})
+  set_property(TARGET ${TRGT} PROPERTY LLVMIR_FILES ${OUT_LLVMIR_FILES})
+  set_property(TARGET ${TRGT} PROPERTY LINKER_LANGUAGE ${LINKER_LANGUAGE})
+  set_property(TARGET ${TRGT} PROPERTY LINK_DEPENDS ${LINK_DEPENDS})
+  set_property(TARGET ${TRGT} PROPERTY LINK_FLAGS ${LINK_FLAGS})
+  set_property(TARGET ${TRGT}
+    PROPERTY LINK_FLAGS_${CMAKE_BUILD_TYPE} ${LINK_FLAGS_${CMAKE_BUILD_TYPE}})
+  set_property(TARGET ${TRGT}
+    PROPERTY INTERFACE_LINK_LIBRARIES ${INTERFACE_LINK_LIBRARIES})
+  set_property(TARGET ${TRGT}
+    PROPERTY LINK_INTERFACE_LIBRARIES ${LINK_INTERFACE_LIBRARIES})
+  set_property(TARGET ${TRGT}
+    PROPERTY
+    LINK_INTERFACE_LIBRARIES_${CMAKE_BUILD_TYPE}
+    ${LINK_INTERFACE_LIBRARIES_${CMAKE_BUILD_TYPE}})
+  set_property(TARGET ${TRGT} PROPERTY EXCLUDE_FROM_ALL On)
+  set_property(TARGET ${TRGT} PROPERTY LLVMIR_SHORT_NAME ${SHORT_NAME})
+
+  add_custom_command(OUTPUT ${FULL_OUT_LLVMIR_FILE}
+    COMMAND llvm-link
+    ARGS
+    ${LLVMIR_ATTACH_UNPARSED_ARGUMENTS}
+    -o ${FULL_OUT_LLVMIR_FILE} ${IN_FULL_LLVMIR_FILES}
+    DEPENDS ${IN_FULL_LLVMIR_FILES}
+    COMMENT "Linking LLVM bitcode ${OUT_LLVMIR_FILE}"
+    VERBATIM)
+
+  ## postamble
+
 endfunction()
 

@@ -344,4 +344,29 @@ function(llvmir_extract_compile_flags out_compile_flags from)
   set(${out_compile_flags} ${compile_flags} PARENT_SCOPE)
 endfunction()
 
+function(llvmir_extract_lang_compiler out_lang_compiler file)
+  set(lang_compiler "")
+  get_filename_component(file_ext "${file}" EXT)
+
+  set(cxx_extensions ".cpp" ".cc" ".cxx" ".c++" ".C")
+  set(fortran_extensions ".f" ".F" ".f90" ".F90" ".f95" ".F95" ".f03" ".F03" ".f08" ".F08")
+  set(c_extensions ".c")
+
+  # Fallback for older CMake versions
+  list(FIND cxx_extensions "${file_ext}" cxx_idx)
+  list(FIND fortran_extensions "${file_ext}" fortran_idx)
+  list(FIND c_extensions "${file_ext}" c_idx)
+
+  if(NOT ${cxx_idx} EQUAL -1)
+    set(lang_compiler "CXX")
+  elseif(NOT ${fortran_idx} EQUAL -1)
+    set(lang_compiler "Fortran")
+  elseif(NOT ${c_idx} EQUAL -1)
+    set(lang_compiler "C")
+  else()
+    message(FATAL_ERROR "Unknown file extension ${file_ext}.")
+  endif()
+
+  set(${out_lang_compiler} ${CMAKE_${lang_compiler}_COMPILER} PARENT_SCOPE)
+endfunction()
 
